@@ -54,7 +54,7 @@ from dotenv import load_dotenv
 # ── Pipecat core ──────────────────────────────────────────────────────────────
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -148,7 +148,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     llm = GoogleLLMService(
         api_key=gemini_api_key,
-        model="gemini-2.5-flash",
+        model="gemini-2.0-flash",
         system_instruction=SYSTEM_PROMPT,
     )
 
@@ -166,6 +166,7 @@ async def main() -> None:
     @llm.event_handler("on_function_calls_started")
     async def on_tool_started(service, function_calls):
         await tts.queue_frame(TTSSpeakFrame("One moment please."))
+
 
     # ------------------------------------------------------------------
     # 8. Build the LLM context with tool definitions
@@ -227,11 +228,14 @@ async def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 11. Queue an initial LLMRunFrame so Priya speaks her opening
-    #     greeting automatically when the call starts — just like a
-    #     real inbound call where the agent answers first.
+    # 11. Speak the opening greeting directly via TTS.
+    #     LLMRunFrame with empty context causes Gemini to error with
+    #     "contents are required". The first real LLM call fires only
+    #     after the user speaks and provides actual content.
     # ------------------------------------------------------------------
-    await task.queue_frames([LLMRunFrame()])
+    await task.queue_frames([
+        TTSSpeakFrame("Hi, thank you for calling Domino's! I'm Priya. May I know your name please?")
+    ])
 
     # ------------------------------------------------------------------
     # 12. Start the UI and run the pipeline

@@ -572,7 +572,7 @@ body > *:not(.bg-glow) { position: relative; z-index: 1; }
   <div class="hspace"></div>
   <div class="tech-pills">
     <div class="tech-pill" title="Speech-to-Text">🎙 Deepgram</div>
-    <div class="tech-pill" title="Language Model">🧠 Gemini 2.5</div>
+    <div class="tech-pill" title="Language Model">🧠 Gemini 1.5</div>
     <div class="tech-pill" title="Text-to-Speech">🔊 Cartesia</div>
   </div>
   <div class="live-badge off" id="liveBadge">
@@ -631,7 +631,7 @@ body > *:not(.bg-glow) { position: relative; z-index: 1; }
       <div class="agent-card">
         <div class="agent-row"><span class="ak">Agent</span>     <span class="av">Priya</span></div>
         <div class="agent-row"><span class="ak">STT</span>       <span class="av">Deepgram nova-2</span></div>
-        <div class="agent-row"><span class="ak">LLM</span>       <span class="av">Gemini 2.5 Flash</span></div>
+        <div class="agent-row"><span class="ak">LLM</span>       <span class="av">Gemini 1.5 Flash 8B</span></div>
         <div class="agent-row"><span class="ak">TTS</span>       <span class="av">Cartesia</span></div>
         <div class="agent-row"><span class="ak">Framework</span> <span class="av">Pipecat</span></div>
       </div>
@@ -671,7 +671,7 @@ body > *:not(.bg-glow) { position: relative; z-index: 1; }
 <div class="footer">
   <span>Powered by Pipecat</span><span class="footer-sep">·</span>
   <span>Deepgram</span><span class="footer-sep">·</span>
-  <span>Gemini 2.5 Flash</span><span class="footer-sep">·</span>
+  <span>Gemini 1.5 Flash 8B</span><span class="footer-sep">·</span>
   <span>Cartesia</span><span class="footer-sep">·</span>
   <span>Press <strong>Ctrl+C</strong> in terminal to end</span>
 </div>
@@ -903,6 +903,19 @@ function connect() {
       case 'init':
         applyState(msg.state||'idle');
         if(msg.stats) updateStats(msg.stats);
+        // Replay stored conversation history for late-connecting browsers
+        if(msg.messages && msg.messages.length){
+          msg.messages.forEach(m=>{
+            if(m.speaker==='user') addMessage('user',m.text,m.time);
+            else addMessage('bot',m.text,m.time);
+          });
+          if(!callStarted){ callStarted=true; stats.calls++; updateStats({}); startTimer(); advanceFlow(1); }
+          advanceFlow(2);
+        }
+        if(msg.bot_buf && msg.bot_buf.trim()) appendChunk(msg.bot_buf);
+        if(msg.log_lines && msg.log_lines.length){
+          msg.log_lines.forEach(e=>{ addEvent(e.message,e.event_type,e.time); });
+        }
         break;
       case 'state':
         applyState(msg.state);

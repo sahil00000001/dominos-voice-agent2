@@ -50,6 +50,9 @@ class WebDominosUI:
         self._server_loop: Optional[asyncio.AbstractEventLoop] = None
         self._current_state = "idle"
         self._stats = {"calls": 0, "orders": 0, "revenue": 0.0, "upsells": 0}
+        self._messages: list = []      # stored for replay on new connections
+        self._bot_buf: str = ""        # current in-progress bot reply
+        self._log_lines: list = []     # order events for replay
         self._app = self._build_app()
 
     # ── FastAPI app ───────────────────────────────────────────────────────────
@@ -69,10 +72,14 @@ class WebDominosUI:
             self._connections.add(websocket)
             # Send current state to newly connected client
             try:
+                # Send full state snapshot so late-connecting browsers catch up
                 await websocket.send_text(json.dumps({
                     "type": "init",
                     "state": self._current_state,
                     "stats": self._stats,
+                    "messages": self._messages,
+                    "bot_buf": self._bot_buf,
+                    "log_lines": self._log_lines,
                 }))
             except Exception:
                 pass
@@ -130,13 +137,21 @@ class WebDominosUI:
     # ── Conversation helpers (identical interface to DominosUI) ───────────────
 
     def add_user_message(self, text: str) -> None:
-        self._emit({"type": "user_msg", "text": text, "time": _ts()})
+        ts = _ts()
+        self._messages.append({"speaker": "user", "text": text, "time": ts})
+        self._emit({"type": "user_msg", "text": text, "time": ts})
 
     def append_bot_text(self, text: str) -> None:
+        self._bot_buf += text
         self._emit({"type": "bot_chunk", "text": text})
 
     def finalise_bot_message(self) -> None:
-        self._emit({"type": "bot_done", "time": _ts()})
+        ts = _ts()
+        text = self._bot_buf.strip()
+        if text:
+            self._messages.append({"speaker": "bot", "text": text, "time": ts})
+        self._bot_buf = ""
+        self._emit({"type": "bot_done", "time": ts})
 
     # ── Order log ─────────────────────────────────────────────────────────────
 
@@ -161,13 +176,15 @@ class WebDominosUI:
         elif "ORDER FINALISED" in message:
             event_type = "finalised"
 
-        self._emit({
+        entry = {
             "type": "order_event",
             "message": clean,
             "event_type": event_type,
             "time": _ts(),
             "stats": {**self._stats},
-        })
+        }
+        self._log_lines.append(entry)
+        self._emit(entry)
 
     # ── Broadcast ─────────────────────────────────────────────────────────────
 

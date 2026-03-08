@@ -236,7 +236,7 @@ class DominosUI:
         lines.append("  |  ", style="dim")
         lines.append("STT: Deepgram", style="bold green")
         lines.append("  ·  ", style="dim")
-        lines.append("LLM: Gemini 2.5 Flash", style="bold blue")
+        lines.append("LLM: Gemini 1.5 Flash 8B", style="bold blue")
         lines.append("  ·  ", style="dim")
         lines.append("TTS: Cartesia", style="bold cyan")
         lines.append("\n")
