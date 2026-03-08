@@ -1,0 +1,11 @@
+# Pipecat with all required service extras + local audio transport
+pipecat-ai[google,deepgram,cartesia,local]
+
+# Environment variable loading
+python-dotenv
+
+# Beautiful terminal UI with animations
+rich
+
+# Async support (included in Python stdlib)
+asyncio
