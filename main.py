@@ -82,7 +82,8 @@ from tools import (
     finalise_order,
     get_tool_definitions,
 )
-from ui import DominosUI, VoiceUIProcessor
+from ui import VoiceUIProcessor
+from web_ui import WebDominosUI
 
 
 async def main() -> None:
@@ -108,7 +109,7 @@ async def main() -> None:
     #    DominosUI registers itself as a module singleton so that tools.py
     #    can call add_log() without needing a direct reference.
     # ------------------------------------------------------------------
-    ui = DominosUI()
+    ui = WebDominosUI()
 
     # ------------------------------------------------------------------
     # 3. Local audio transport — mic in, speakers out

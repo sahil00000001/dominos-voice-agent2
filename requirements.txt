@@ -4,8 +4,12 @@ pipecat-ai[google,deepgram,cartesia,local]
 # Environment variable loading
 python-dotenv
 
-# Beautiful terminal UI with animations
+# Terminal UI (kept for VoiceUIProcessor frame types)
 rich
+
+# Web dashboard server
+fastapi
+uvicorn[standard]
 
 # Async support (included in Python stdlib)
 asyncio
