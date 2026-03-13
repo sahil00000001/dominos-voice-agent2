@@ -11,12 +11,12 @@ HOW TO RUN
 
    Your .env should look like this:
        DEEPGRAM_API_KEY=dg_xxxxxxxxxxxxxxxxxxxx
-       GEMINI_API_KEY=AIzaxxxxxxxxxxxxxxxxxxxxxxxx
+       GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
        CARTESIA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
    Where to get free keys:
        Deepgram  → https://console.deepgram.com/          (free $200 credit)
-       Gemini    → https://aistudio.google.com/app/apikey (free tier)
+       Groq      → https://console.groq.com/keys           (free tier, ultra-fast)
        Cartesia  → https://play.cartesia.ai/              (free tier)
 
 2. Create and activate a virtual environment:
@@ -38,7 +38,7 @@ HOW TO RUN
 
 PIPELINE FLOW
 ─────────────
-Microphone ──► Deepgram STT ──► User Aggregator ──► Gemini LLM
+Microphone ──► Deepgram STT ──► User Aggregator ──► Groq LLM
        ──► Cartesia TTS ──► Speaker ──► Assistant Aggregator ──► UI Observer
                                   ↕
                         Tool call handlers (tools.py)
@@ -69,7 +69,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 # ── Service integrations ──────────────────────────────────────────────────────
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.google.llm import GoogleLLMService
+from pipecat.services.groq.llm import GroqLLMService
 
 # ── Local audio transport (microphone + speakers via PyAudio) ─────────────────
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
@@ -94,10 +94,10 @@ async def main() -> None:
     load_dotenv(override=True)
 
     deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
-    gemini_api_key   = os.getenv("GEMINI_API_KEY")
+    groq_api_key     = os.getenv("GROQ_API_KEY")
     cartesia_api_key = os.getenv("CARTESIA_API_KEY")
 
-    if not all([deepgram_api_key, gemini_api_key, cartesia_api_key]):
+    if not all([deepgram_api_key, groq_api_key, cartesia_api_key]):
         raise EnvironmentError(
             "\n\n  ❌  Missing API keys!\n"
             "  Copy .env.example → .env and fill in all three keys.\n"
@@ -141,22 +141,20 @@ async def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # 6. Google Gemini LLM — the brain of the agent
-    #    gemini-2.5-flash is fast and generous on the free tier.
-    #    Thinking is left at default (disabled by Pipecat for this model)
-    #    to avoid a known upstream bug with function calling + thinking.
+    # 6. Groq LLM — the brain of the agent
+    #    llama-3.3-70b-versatile is ultra-fast on Groq's free tier and
+    #    has excellent function-calling / tool-use support.
     # ------------------------------------------------------------------
-    llm = GoogleLLMService(
-        api_key=gemini_api_key,
-        model="gemini-2.0-flash",
-        system_instruction=SYSTEM_PROMPT,
+    llm = GroqLLMService(
+        api_key=groq_api_key,
+        model="llama-3.3-70b-versatile",
     )
 
     # ------------------------------------------------------------------
     # 7. Register tool call handlers
-    #    When Gemini emits a function call, Pipecat intercepts it, runs
+    #    When Groq emits a function call, Pipecat intercepts it, runs
     #    the matching Python function, and injects the result back into
-    #    the conversation context so Gemini can continue naturally.
+    #    the conversation context so the LLM can continue naturally.
     # ------------------------------------------------------------------
     llm.register_function("confirm_order",   confirm_order)
     llm.register_function("add_upsell_item", add_upsell_item)
@@ -169,9 +167,14 @@ async def main() -> None:
 
 
     # ------------------------------------------------------------------
-    # 8. Build the LLM context with tool definitions
+    # 8. Build the LLM context with system prompt + tool definitions
+    #    Groq uses OpenAI-compatible format — system prompt goes as a
+    #    messages entry, not a service-level parameter.
     # ------------------------------------------------------------------
-    context = LLMContext(tools=get_tool_definitions())
+    context = LLMContext(
+        messages=[{"role": "system", "content": SYSTEM_PROMPT}],
+        tools=get_tool_definitions(),
+    )
 
     # user_aggregator  — collects STT transcripts → adds to context as user msg
     # assistant_aggregator — collects LLM output → adds to context as asst msg
@@ -229,8 +232,8 @@ async def main() -> None:
 
     # ------------------------------------------------------------------
     # 11. Speak the opening greeting directly via TTS.
-    #     LLMRunFrame with empty context causes Gemini to error with
-    #     "contents are required". The first real LLM call fires only
+    #     We speak the greeting directly via TTS.
+    #     The first real LLM call fires only
     #     after the user speaks and provides actual content.
     # ------------------------------------------------------------------
     await task.queue_frames([
