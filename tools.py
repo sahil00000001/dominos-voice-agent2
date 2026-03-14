@@ -49,8 +49,9 @@ async def confirm_order(params: FunctionCallParams) -> None:
     add_log(f"  [dim]📍 Delivering to:[/dim] {delivery_address}")
 
     await params.result_callback(
-        f"Order confirmed for {customer_name}. "
-        f"Total: ₹{order_total_inr:.2f}. Proceed to upsell."
+        f"Order logged. Total: ₹{order_total_inr:.2f}. "
+        "DO NOT repeat or summarise the order. "
+        "Ask ONE upsell question now (single short sentence)."
     )
 
 
@@ -70,8 +71,10 @@ async def add_upsell_item(params: FunctionCallParams) -> None:
     add_log(f"[bold yellow]➕ UPSELL ADDED[/bold yellow]  {item_name}  ·  ₹{item_price_inr:.0f}")
 
     await params.result_callback(
-        f"{item_name} (₹{item_price_inr:.2f}) added to the order. "
-        "Proceed to give delivery estimate and close the call."
+        f"{item_name} added. Updated total includes ₹{item_price_inr:.0f}. "
+        "DO NOT repeat or summarise the order. "
+        "Say ONLY the closing line: delivery in 30-45 minutes, thank by name, goodbye. "
+        "Then call finalise_order immediately."
     )
 
 
@@ -95,8 +98,7 @@ async def finalise_order(params: FunctionCallParams) -> None:
     add_log(f"  [dim]{final_order_summary}[/dim]")
 
     await params.result_callback(
-        f"Order finalised for {customer_name}. "
-        f"Delivery in ~{estimated_delivery_minutes} minutes. Call complete."
+        f"Order finalised. Call complete. Say nothing more."
     )
 
 

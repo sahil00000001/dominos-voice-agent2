@@ -1,6 +1,6 @@
 # 🍕 Domino's Pizza Voice AI Receptionist
 
-A fully working, real-time voice AI agent that acts as a phone receptionist for Domino's Pizza. You speak into your microphone, it listens, understands, and replies through your speakers — just like talking to a real person on a phone call.
+A fully working, real-time voice AI agent that acts as a phone receptionist for Domino's Pizza India. You speak into your microphone, it listens, understands, and replies through your speakers — just like talking to a real person on a phone call.
 
 ---
 
@@ -9,11 +9,11 @@ A fully working, real-time voice AI agent that acts as a phone receptionist for 
 When you run the program, an AI agent named **Priya** answers the call and:
 
 1. Greets you and asks for your name
-2. Takes your pizza order
+2. Takes your pizza order — one question at a time
 3. Asks for your delivery address
-4. Repeats the full order back to confirm
-5. Offers one upsell deal (Garlic Bread, Choco Lava Cake, Pepsi, etc.)
-6. Gives a 30–45 minute delivery estimate and ends the call
+4. Reads the full order back to confirm
+5. Offers one upsell deal (Choco Lava Cake, Garlic Bread, Pepsi, etc.)
+6. Gives a 30–45 minute delivery estimate and **automatically ends the call**
 
 All of this happens through **real voice** — you speak, it listens, it talks back.
 
@@ -24,24 +24,27 @@ All of this happens through **real voice** — you speak, it listens, it talks b
 | Layer | Service | Why |
 |---|---|---|
 | **Speech-to-Text** | Deepgram | Fast, accurate, free tier available |
-| **AI Brain** | Google Gemini 2.5 Flash | Smart, fast, free API tier |
+| **AI Brain** | Groq (llama-3.3-70b-versatile) | Ultra-fast inference, free tier |
 | **Text-to-Speech** | Cartesia | Natural warm voice, low latency, free tier |
-| **Framework** | Pipecat | Connects all the above into a real-time voice pipeline |
-| **Terminal UI** | Rich | Beautiful animated full-screen dashboard |
+| **Framework** | Pipecat 0.0.105 | Real-time voice pipeline framework |
+| **Dashboard** | FastAPI + WebSocket | Live browser dashboard at localhost:8000 |
 
 ---
 
 ## Project Structure
 
 ```
-dominos-voice-agent/
-├── main.py           ← Starts everything, builds the pipeline
-├── tools.py          ← Order functions Gemini can call (confirm, upsell, finalise)
-├── system_prompt.py  ← Priya's personality and call script
-├── ui.py             ← Animated terminal dashboard
+dominos-voice-agent2/
+├── main.py           ← Pipeline setup, echo-fix strategy, call-end logic
+├── tools.py          ← Order functions the LLM can call (confirm, upsell, finalise)
+├── system_prompt.py  ← Priya's personality, menu, and call script
+├── ui.py             ← Pipecat FrameProcessor that drives the dashboard state
+├── web_ui.py         ← FastAPI + WebSocket server, broadcasts events to browser
+├── static/
+│   └── index.html    ← Browser dashboard UI
 ├── requirements.txt  ← All Python dependencies
 ├── .env.example      ← Template for API keys
-└── .env              ← Your actual API keys (never share this file)
+└── .env              ← Your actual API keys (never commit this file)
 ```
 
 ---
@@ -51,74 +54,56 @@ dominos-voice-agent/
 ```
 Your Microphone
       ↓
-Deepgram STT  ← converts your speech to text in real time
+Deepgram STT       ← converts your speech to text in real time
       ↓
-User Aggregator  ← collects your words, waits for a pause
+User Aggregator    ← waits for speech pause (0.8s), mutes mic while bot speaks
       ↓
-Gemini 2.5 Flash LLM  ← thinks and generates Priya's reply
-      ↓  (may call tools: confirm_order / add_upsell_item / finalise_order)
-Cartesia TTS  ← converts Priya's reply text to natural speech audio
+Groq LLM           ← generates Priya's reply (may call tools)
+      ↓
+Cartesia TTS       ← converts text to natural speech audio
       ↓
 Your Speakers
       ↓
-Assistant Aggregator  ← remembers what was said (conversation memory)
+Assistant Aggregator  ← stores reply in conversation memory
       ↓
-UI Observer  ← updates the live dashboard display
+UI Observer           ← updates the live browser dashboard
 ```
 
-Every component is connected by **Pipecat**, which manages the real-time audio streaming between all services.
+**Echo prevention:** A `DelayedUnmuteStrategy` keeps the microphone muted for 800 ms after the bot finishes speaking, preventing Priya's own voice from being picked up and sent back to the LLM.
 
 ---
 
 ## The Three AI Tools (Function Calling)
 
-Gemini can call these Python functions mid-conversation when appropriate:
+The LLM can call these Python functions mid-conversation:
 
 ### `confirm_order`
-Called when the customer confirms their full order.
-- Logs: customer name, items ordered, delivery address, total price
-- Tells Gemini: "Order confirmed, proceed to upsell"
+Called when the customer confirms their full order and address.
+- Logs: customer name, items, delivery address, total price
+- Tells the LLM: "Order confirmed, ask one upsell question"
 
 ### `add_upsell_item`
 Called when the customer accepts an upsell offer.
 - Logs: item name and price
-- Tells Gemini: "Item added, give delivery estimate"
+- Tells the LLM: "Item added, say the closing line"
 
 ### `finalise_order`
-Called at the very end of the call.
+Called at the very end of the call after the closing line.
 - Logs: final order summary and estimated delivery time
-- Tells Gemini: "Call complete"
+- **Automatically shuts down the pipeline** after 3 seconds (call ends)
 
-These appear in the **ORDER EVENTS** panel on the dashboard in real time.
+These appear in the **ORDER EVENTS** panel on the browser dashboard in real time.
 
 ---
 
-## The Terminal UI
+## The Browser Dashboard
 
-When running, the terminal goes full-screen and shows:
+When running, your browser opens at `http://localhost:8000` and shows:
 
-```
-╔══════════════════════════════════════════════════════════╗
-║  🍕  DOMINO'S PIZZA  ·  AI Voice Receptionist           ║
-║  Agent: Priya  |  Deepgram · Gemini 2.5 Flash · Cartesia║
-╠══════════════════════════════════════════════════════════╣
-║  🎤  LISTENING                                           ║
-║     ⠙  LISTENING — I'm all ears! Go ahead…              ║
-╠══════════════════════════════════════════════════════════╣
-║  💬  CONVERSATION                                        ║
-║  14:02:10  You:    I want a large Farmhouse pizza        ║
-║  14:02:13  Priya:  Sure! And your delivery address?      ║
-╠══════════════════════════════════════════════════════════╣
-║  📋  ORDER EVENTS                                        ║
-║  14:02:25  ✔ ORDER CONFIRMED  Raj · ₹349                 ║
-╚══════════════════════════════════════════════════════════╝
-```
-
-**Status animations:**
-- 🎤 **Green arc spinner** = Listening (you are talking)
-- 🤔 **Yellow dots spinner** = Thinking (Gemini is processing)
-- 🔊 **Cyan wave spinner** = Speaking (Priya is talking)
-- ⚪ **Dim dots** = Idle (waiting for you to speak)
+- **Status indicator** — IDLE / LISTENING / THINKING / SPEAKING (animated)
+- **Live conversation** — both your messages and Priya's replies appear in real time
+- **Order events panel** — confirm / upsell / finalise events with timestamps
+- **Stats bar** — call count, orders, revenue, upsells
 
 ---
 
@@ -129,7 +114,7 @@ When running, the terminal goes full-screen and shows:
 | Service | Link | Notes |
 |---|---|---|
 | Deepgram | https://console.deepgram.com | Sign up → copy API Key |
-| Gemini | https://aistudio.google.com/app/apikey | Click "Create API key" |
+| Groq | https://console.groq.com/keys | Sign up → Create API key |
 | Cartesia | https://play.cartesia.ai | Sign up → Settings → API Keys |
 
 ### Step 2 — Install Python 3.12
@@ -137,12 +122,15 @@ When running, the terminal goes full-screen and shows:
 Download from: https://python.org/downloads/release/python-3120
 **Important:** Check "Add Python to PATH" during install.
 
-### Step 3 — Set Up the Project
+### Step 3 — Clone and set up the project
 
 ```powershell
-cd "C:\Users\vashi\Downloads\Ai-Agent\dominos-voice-agent"
-python -m venv venv
-venv\Scripts\activate
+git clone https://github.com/sahil00000001/dominos-voice-agent2.git
+cd dominos-voice-agent2
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
@@ -155,9 +143,10 @@ notepad .env
 ```
 
 Fill in your three keys:
-```
+
+```env
 DEEPGRAM_API_KEY=dg_xxxxxxxxxxxxxxxxxxxx
-GEMINI_API_KEY=AIzaxxxxxxxxxxxxxxxxxxxxxxxx
+GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
 CARTESIA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
@@ -166,61 +155,66 @@ CARTESIA_API_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ## Running the Agent
 
 ```powershell
-cd "C:\Users\vashi\Downloads\Ai-Agent\dominos-voice-agent"
-venv\Scripts\activate
+# Activate the virtual environment (only needed once per terminal session)
+.\.venv\Scripts\Activate.ps1
+
+# Run the agent
 python main.py
 ```
 
-Press **Ctrl+C** to end the call.
+The browser dashboard opens automatically at **http://localhost:8000**.
+Speak into your microphone. Press **Ctrl+C** to end the session.
 
-> **Tip:** Use headphones for the best experience. Without headphones, the microphone can pick up Priya's voice from the speakers and cause echo. Headphones completely prevent this.
+> **Tip:** Use **headphones** for the best experience. Without headphones, the microphone can pick up Priya's voice from the speakers. The `DelayedUnmuteStrategy` reduces this significantly, but headphones eliminate it completely.
 
 ---
 
 ## Every Time You Come Back
 
-You only need to activate the venv and run:
-
 ```powershell
-cd "C:\Users\vashi\Downloads\Ai-Agent\dominos-voice-agent"
-venv\Scripts\activate
+cd dominos-voice-agent2
+.\.venv\Scripts\Activate.ps1
 python main.py
 ```
 
 ---
 
-## Errors We Fixed During Setup
+## Menu
 
-| Error | Cause | Fix |
-|---|---|---|
-| `Python 3.14` numba build failure | Pipecat needs Python ≤ 3.13 | Installed Python 3.12 specifically |
-| `FrameDirection` import error | Moved to `frame_processor` module in this version | Changed import path |
-| `CartesiaTTSService voice_id` error | API changed from `settings=` to direct `voice_id=` | Passed `voice_id` directly |
-| `GoogleLLMSettings system_instruction` error | Parameter moved to `GoogleLLMService` directly | Passed `system_instruction` to the service |
-| `'dict' object has no attribute 'confidence'` | VAD params need `VADParams` object, not a plain dict | Used `VADParams(stop_secs=0.8)` |
-| Echo / repeated words | Duplicate VAD in both transport and aggregator | Removed VAD from transport, kept only in aggregator |
+| Pizza | Regular | Medium | Large |
+|---|---|---|---|
+| Margherita | ₹199 | ₹299 | ₹499 |
+| Farmhouse | ₹249 | ₹349 | ₹549 |
+| Veggie Paradise | ₹249 | ₹349 | ₹549 |
+| Paneer Makhani | ₹279 | ₹379 | ₹599 |
+| Double Cheese Margherita | ₹229 | ₹329 | ₹529 |
+| Chicken Dominator | ₹299 | ₹399 | ₹649 |
+| Pepper Barbeque Chicken | ₹279 | ₹379 | ₹599 |
+| Chicken Golden Delight | ₹269 | ₹369 | ₹579 |
+| Keema Do Pyaza | ₹299 | ₹399 | ₹649 |
+
+**Sides & Drinks (upsell):** Garlic Bread ₹79 · Choco Lava Cake ₹49 · Pepsi ₹30
 
 ---
 
-## Customisation Ideas
+## Customisation
 
-- **Change Priya's voice** — Browse voices at https://play.cartesia.ai and replace the `voice_id` in `main.py`
-- **Change the menu** — Edit `system_prompt.py` to add/remove items and prices
-- **Change the personality** — Edit the system prompt to make Priya more formal, more casual, etc.
-- **Add more tools** — Add functions in `tools.py` and register them in `main.py` (e.g. `check_order_status`, `apply_coupon`)
-- **Connect to a real POS** — Replace the `print` logs in `tools.py` with actual API calls to your ordering system
+- **Change Priya's voice** — Browse voices at https://play.cartesia.ai and replace `voice_id` in `main.py`
+- **Change the menu** — Edit `system_prompt.py`
+- **Change the personality** — Edit the call flow rules in `system_prompt.py`
+- **Connect to a real POS** — Replace the log calls in `tools.py` with actual API calls to your ordering system
 
 ---
 
 ## Dependencies
 
 ```
-pipecat-ai[google,deepgram,cartesia,local]  ← core framework + all services
-torch (CPU)                                  ← powers the Silero VAD model
-python-dotenv                                ← loads API keys from .env file
-rich                                         ← beautiful terminal UI
+pipecat-ai[cartesia,deepgram,groq,local]  ← core framework + all services
+torch (CPU)                                ← powers the Silero VAD model
+python-dotenv                              ← loads API keys from .env
+fastapi + uvicorn                          ← web dashboard server
 ```
 
 ---
 
-*Built with Pipecat · Gemini 2.5 Flash · Deepgram · Cartesia*
+*Built with Pipecat · Groq (Llama 3.3 70B) · Deepgram · Cartesia*

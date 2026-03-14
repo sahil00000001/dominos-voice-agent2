@@ -40,15 +40,12 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     Frame,
-    LLMFullResponseEndFrame,
-    LLMFullResponseStartFrame,
-    TextFrame,
-    TranscriptionFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
+from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 
@@ -330,11 +327,17 @@ class VoiceUIProcessor(FrameProcessor):
     and observes every downstream frame to drive the DominosUI state machine.
 
     It passes ALL frames through unchanged — it never blocks or modifies them.
+
+    NOTE: TranscriptionFrame and TextFrame are consumed by user_aggregator and
+    assistant_aggregator before reaching this processor, so we read message text
+    directly from the LLMContext object instead.
     """
 
-    def __init__(self, ui: DominosUI) -> None:
+    def __init__(self, ui, context: Optional[LLMContext] = None) -> None:
         super().__init__()
         self._ui = ui
+        self._context = context
+        self._last_shown_user: str = ""  # last user text we displayed
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         # Always pass the frame downstream first so the pipeline is never blocked
@@ -345,33 +348,39 @@ class VoiceUIProcessor(FrameProcessor):
             self._ui.set_listening()
 
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            # VAD detected end of user speech; LLM will start soon
+            # VAD detected end of user speech; LLM will start soon.
+            # By this point user_aggregator has already added the user message
+            # to context, so we can read it here.
             self._ui.set_thinking()
-
-        # ── Transcription (user's words) ────────────────────────────────
-        elif isinstance(frame, TranscriptionFrame):
-            if frame.text and frame.text.strip():
-                self._ui.add_user_message(frame.text.strip())
-
-        # ── LLM generating a response ───────────────────────────────────
-        elif isinstance(frame, LLMFullResponseStartFrame):
-            self._ui.set_thinking()
-
-        elif isinstance(frame, TextFrame):
-            # Streaming text chunks from the LLM
-            if frame.text:
-                self._ui.append_bot_text(frame.text)
+            self._show_latest_user_from_context()
 
         # ── TTS playing audio ───────────────────────────────────────────
         elif isinstance(frame, TTSStartedFrame):
             self._ui.set_speaking()
 
         elif isinstance(frame, (TTSStoppedFrame, BotStoppedSpeakingFrame)):
-            # TTS finished — commit the bot message and go back to idle
+            # TTS finished — commit the bot message and go back to idle.
+            # Bot text was already fed via on_assistant_turn_stopped in main.py.
             self._ui.finalise_bot_message()
             self._ui.set_idle()
 
         await self.push_frame(frame, direction)
+
+    # ── Context helpers ────────────────────────────────────────────────
+
+    def _show_latest_user_from_context(self) -> None:
+        """Read the most recent user message from context and push it to the UI."""
+        if not self._context:
+            return
+        for msg in reversed(self._context.messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    text = content.strip()
+                    if text and text != self._last_shown_user:
+                        self._ui.add_user_message(text)
+                        self._last_shown_user = text
+                break
 
 
 # ── Utility ───────────────────────────────────────────────────────────────
