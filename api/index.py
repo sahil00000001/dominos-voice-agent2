@@ -51,6 +51,30 @@ async def serve_index():
     """
     return HTMLResponse((_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty 204 so browsers stop logging 404 for favicon."""
+    return Response(status_code=204)
+
+
+@app.get("/api/debug")
+async def debug():
+    """
+    Returns which API keys are present (masked) so you can verify Vercel
+    environment variables are configured correctly. Remove before production.
+    """
+    def mask(val: str | None) -> str:
+        if not val:
+            return "NOT SET ❌"
+        return val[:6] + "…" + val[-4:] + " ✅"
+
+    return JSONResponse({
+        "DEEPGRAM_API_KEY": mask(os.environ.get("DEEPGRAM_API_KEY")),
+        "GROQ_API_KEY":     mask(os.environ.get("GROQ_API_KEY")),
+        "CARTESIA_API_KEY": mask(os.environ.get("CARTESIA_API_KEY")),
+    })
+
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are Priya, a friendly voice receptionist for Domino's Pizza India. You handle incoming calls to take orders, confirm delivery details, and offer deals. This is a voice call — keep all responses SHORT, natural, and conversational. Never use bullet points, lists, or formatting.
@@ -379,10 +403,21 @@ async def chat(request: Request):
         })
 
     except urllib.error.HTTPError as exc:
+        # Surface the full Groq error body so it's visible in browser DevTools
         detail = exc.read().decode(errors="replace")
-        return JSONResponse({"error": f"Groq {exc.code}: {detail}", "text": "", "tool_events": [], "messages": client_messages, "call_ended": False}, status_code=502)
+        groq_key_set = bool(os.environ.get("GROQ_API_KEY"))
+        return JSONResponse({
+            "error": f"Groq HTTP {exc.code}: {detail}",
+            "hint": "GROQ_API_KEY is set" if groq_key_set else "GROQ_API_KEY is NOT SET in Vercel env vars",
+            "text": "", "tool_events": [], "messages": client_messages, "call_ended": False,
+        }, status_code=502)
     except Exception as exc:
-        return JSONResponse({"error": str(exc), "text": "", "tool_events": [], "messages": client_messages, "call_ended": False}, status_code=500)
+        import traceback
+        return JSONResponse({
+            "error": str(exc),
+            "trace": traceback.format_exc(),
+            "text": "", "tool_events": [], "messages": client_messages, "call_ended": False,
+        }, status_code=500)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
