@@ -15,13 +15,14 @@ request because Vercel serverless functions are stateless between calls.
 
 import json
 import os
+import pathlib
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
@@ -31,9 +32,23 @@ app = FastAPI(title="Domino's Voice Agent API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST", "OPTIONS"],
+    allow_methods=["POST", "OPTIONS", "GET"],
     allow_headers=["*"],
 )
+
+# ── Frontend ───────────────────────────────────────────────────────────────────
+
+# public/index.html lives one directory above api/index.py
+_PUBLIC_DIR = pathlib.Path(__file__).parent.parent / "public"
+
+@app.get("/")
+async def serve_index():
+    """
+    Serve the browser voice UI at the root URL.
+    Vercel routes all non-static requests through the FastAPI app, so we
+    read public/index.html from disk and return it as an HTML response.
+    """
+    return HTMLResponse((_PUBLIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
