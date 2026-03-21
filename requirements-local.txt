@@ -1,0 +1,15 @@
+# Pipecat with all required service extras + local audio transport
+pipecat-ai[groq,deepgram,cartesia,local]
+
+# Environment variable loading
+python-dotenv
+
+# Terminal UI (kept for VoiceUIProcessor frame types)
+rich
+
+# Web dashboard server
+fastapi
+uvicorn[standard]
+
+# Async support (included in Python stdlib)
+asyncio

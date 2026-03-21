@@ -1,15 +1,8 @@
-# Pipecat with all required service extras + local audio transport
-pipecat-ai[groq,deepgram,cartesia,local]
-
-# Environment variable loading
-python-dotenv
-
-# Terminal UI (kept for VoiceUIProcessor frame types)
-rich
-
-# Web dashboard server
+# ── Vercel production dependencies ────────────────────────────────────────────
+# Only what api/index.py needs. All three API endpoints (STT, LLM, TTS) use
+# stdlib urllib for HTTP calls — no extra HTTP client needed.
 fastapi
-uvicorn[standard]
 
-# Async support (included in Python stdlib)
-asyncio
+# ── Local development ─────────────────────────────────────────────────────────
+# For running main.py locally (Pipecat pipeline with mic/speakers), use:
+#   pip install -r requirements-local.txt
