@@ -1,2 +1,0 @@
-# No external dependencies — all API calls use Python stdlib urllib.request
-# Vercel Python 3.12 runtime includes everything needed
