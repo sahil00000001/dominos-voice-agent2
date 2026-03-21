@@ -275,6 +275,9 @@ def _groq_call(messages: list, use_tools: bool) -> dict:
         headers={
             "Authorization": f"Bearer {groq_key}",
             "Content-Type":  "application/json",
+            # Groq's Cloudflare WAF blocks requests with no User-Agent (error 1010).
+            # Match the header sent by the official groq-python SDK so the request passes.
+            "User-Agent":    "groq-python/0.13.1",
         },
     )
     with urllib.request.urlopen(req, timeout=25) as resp:
