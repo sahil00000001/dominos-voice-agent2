@@ -54,7 +54,7 @@ from dotenv import load_dotenv
 # ── Pipecat core ──────────────────────────────────────────────────────────────
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame, EndFrame, TTSSpeakFrame
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -66,7 +66,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.turns.user_mute import FunctionCallUserMuteStrategy
-from pipecat.turns.user_mute.always_user_mute_strategy import AlwaysUserMuteStrategy
 
 # ── Service integrations ──────────────────────────────────────────────────────
 from pipecat.services.cartesia.tts import CartesiaTTSService
@@ -87,40 +86,6 @@ from tools import (
 from ui import VoiceUIProcessor
 from web_ui import WebDominosUI
 
-
-class DelayedUnmuteStrategy(AlwaysUserMuteStrategy):
-    """Keeps the mic muted for `delay_secs` after the bot stops speaking.
-
-    AlwaysUserMuteStrategy unmutes the moment BotStoppedSpeakingFrame arrives,
-    but the speaker audio is still physically present in the room for a fraction
-    of a second.  Without this delay the microphone picks up the tail-end of
-    Priya's voice, Deepgram transcribes it as a user utterance, and the LLM
-    fires again — creating an infinite echo loop.
-    """
-
-    def __init__(self, delay_secs: float = 0.8):
-        super().__init__()
-        self._delay_secs = delay_secs
-        self._unmute_task = None
-
-    async def process_frame(self, frame) -> bool:
-        if isinstance(frame, BotStartedSpeakingFrame):
-            if self._unmute_task and not self._unmute_task.done():
-                self._unmute_task.cancel()
-                self._unmute_task = None
-            self._bot_speaking = True
-            return True
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            if self._unmute_task and not self._unmute_task.done():
-                self._unmute_task.cancel()
-            self._unmute_task = asyncio.create_task(self._delayed_unmute())
-            return True  # stay muted until delay expires
-        return self._bot_speaking
-
-    async def _delayed_unmute(self):
-        await asyncio.sleep(self._delay_secs)
-        self._bot_speaking = False
-        self._unmute_task = None
 
 
 async def main() -> None:
@@ -218,15 +183,10 @@ async def main() -> None:
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            # vad_stop_secs: wait 0.8s of silence before treating speech as done
-            # This prevents cutting off mid-sentence
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.8)),
-            # Mute user input while bot is speaking or a tool is running.
-            # AlwaysUserMuteStrategy suppresses ALL mic audio and transcriptions
-            # while the bot speaks, preventing echo feedback from being sent to
-            # the LLM as fake "user" messages.
+            # vad_stop_secs: wait 0.5s of silence before treating speech as done
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.5)),
+            # Only mute during tool calls; allow user to barge-in while bot speaks.
             user_mute_strategies=[
-                DelayedUnmuteStrategy(delay_secs=0.8),
                 FunctionCallUserMuteStrategy(),
             ],
         ),
@@ -276,9 +236,8 @@ async def main() -> None:
         pipeline,
         params=PipelineParams(
             enable_metrics=False,
-            # Prevent Priya from being interrupted mid-sentence by her own
-            # voice echoing back through the microphone
-            allow_interruptions=False,
+            # Allow user to interrupt the bot mid-sentence (barge-in)
+            allow_interruptions=True,
         ),
     )
 
@@ -303,7 +262,7 @@ async def main() -> None:
     await task.queue_frames([TTSSpeakFrame(GREETING)])
 
     # ------------------------------------------------------------------
-    # 12. Start the UI and run the pipeline
+    # 13. Start the UI and run the pipeline
     #     ui.start() switches the terminal to the full-screen dashboard.
     #     runner.run() blocks until the pipeline stops or Ctrl+C is pressed.
     #     ui.stop() restores the terminal in all cases.
