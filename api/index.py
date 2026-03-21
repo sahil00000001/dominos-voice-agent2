@@ -38,17 +38,18 @@ app.add_middleware(
 
 # ── Frontend ───────────────────────────────────────────────────────────────────
 
-# public/index.html lives one directory above api/index.py
-_PUBLIC_DIR = pathlib.Path(__file__).parent.parent / "public"
+# api/static/ is a subdirectory of api/ — guaranteed to be bundled by Vercel
+# (Vercel's Python runtime only includes the entrypoint directory and its children)
+_STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 @app.get("/")
 async def serve_index():
     """
     Serve the browser voice UI at the root URL.
-    Vercel routes all non-static requests through the FastAPI app, so we
-    read public/index.html from disk and return it as an HTML response.
+    The HTML lives in api/static/index.html so it's always inside Vercel's
+    serverless function bundle. public/index.html is kept for local reference.
     """
-    return HTMLResponse((_PUBLIC_DIR / "index.html").read_text(encoding="utf-8"))
+    return HTMLResponse((_STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
