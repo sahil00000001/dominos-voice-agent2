@@ -411,18 +411,15 @@ body > *:not(.bg-glow) { position: relative; z-index: 1; }
 ═══════════════════════════════════════════════════════════════════ */
 
 const GREETING      = "Hi, thank you for calling Domino's! I'm Priya. May I know your name please?";
-const VAD_THRESHOLD = 0.018;   // RMS amplitude to detect speech
-const VAD_SILENCE   = 700;     // ms of silence before sending to STT
+const VAD_THRESHOLD = 0.018;   // RMS amplitude to detect speech (barge-in only)
 
 let state         = 'init';
 let messages      = [];      // conversation history sent to /api/chat
 let audioCtx      = null;
 let analyser      = null;
 let micStream     = null;
-let recognition   = null;    // Web Speech API SpeechRecognition instance
-let currentSource = null;    // AudioBufferSourceNode for barge-in stop
-let vadTimer      = null;
-let speechActive  = false;
+let recognition   = null;    // active SpeechRecognition instance
+let currentSource = null;    // active TTS utterance (for barge-in cancel)
 let vadRunning    = false;
 
 // ── Stats ────────────────────────────────────────────────────────────────────
@@ -480,7 +477,11 @@ async function startSession() {
   }
 }
 
-// ── VAD loop ─────────────────────────────────────────────────────────────────
+// ── VAD loop (barge-in only) ──────────────────────────────────────────────────
+// VAD is no longer used to stop recognition — Web Speech API handles its own
+// end-of-speech detection. VAD is only used to:
+//   1. Trigger barge-in when user speaks while agent is talking
+//   2. Wake recognition from idle if it hasn't auto-started yet
 function startVAD() {
   if (vadRunning) return;
   vadRunning = true;
@@ -496,24 +497,12 @@ function startVAD() {
 
     if (rms > VAD_THRESHOLD) {
       if (state === 'speaking') {
-        // ── BARGE-IN ──────────────────────────────────
+        // BARGE-IN: user spoke while agent is talking — stop TTS immediately
         stopCurrentAudio();
         startListening();
       } else if (state === 'idle') {
+        // Safety: wake recognition if it wasn't auto-started
         startListening();
-      } else if (state === 'listening') {
-        // User still talking — reset silence timer
-        speechActive = true;
-        if (vadTimer) { clearTimeout(vadTimer); vadTimer = null; }
-      }
-    } else {
-      // Silence
-      if (state === 'listening' && speechActive && !vadTimer) {
-        vadTimer = setTimeout(() => {
-          vadTimer = null;
-          speechActive = false;
-          stopListening();
-        }, VAD_SILENCE);
       }
     }
     requestAnimationFrame(tick);
@@ -522,45 +511,64 @@ function startVAD() {
 }
 
 // ── Speech Recognition (Web Speech API) ──────────────────────────────────────
-// Replaces MediaRecorder + Deepgram. The browser handles audio capture and
-// transcription locally — no encoding issues, no API round-trip for STT.
+// The browser handles capture + transcription. We do NOT stop recognition from
+// the VAD — we let Web Speech API detect end-of-speech on its own, which
+// prevents the "stuck listening" bug caused by stopping too early.
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function startListening() {
-  if (state === 'listening' || !SpeechRec) return;
+  if (state === 'listening' || state === 'thinking' || state === 'speaking') return;
+  if (!SpeechRec) { showToast('error', 'Speech recognition not supported in this browser'); return; }
+
   setState('listening');
-  speechActive = true;
 
-  // Abort any previous recognition session cleanly
-  if (recognition) { try { recognition.abort(); } catch (_) {} }
+  // Abort any stale session before creating a new one
+  if (recognition) { try { recognition.abort(); } catch (_) {} recognition = null; }
 
-  recognition = new SpeechRec();
-  recognition.lang            = 'en-IN'; // Indian English accent
-  recognition.continuous      = false;   // one utterance at a time
-  recognition.interimResults  = false;   // final results only
+  const rec = new SpeechRec();
+  rec.lang           = 'en-IN';  // Indian English
+  rec.continuous     = false;    // one utterance, then auto-stops
+  rec.interimResults = false;    // final transcript only — no partial results
 
-  recognition.onresult = async (e) => {
-    const transcript = e.results[0][0].transcript.trim();
+  rec.onresult = async (e) => {
+    // Web Speech API detected end-of-speech and has a transcript
+    const transcript = Array.from(e.results)
+      .map(r => r[0].transcript).join(' ').trim();
     recognition = null;
-    if (transcript) await processTurn(transcript);
+    if (transcript && state !== 'ended') await processTurn(transcript);
     else setState('idle');
   };
 
-  // onerror: 'no-speech' is normal (silence), anything else → idle
-  recognition.onerror = () => { recognition = null; setState('idle'); };
+  rec.onerror = (e) => {
+    // 'no-speech': user was silent — restart automatically after short pause
+    // 'aborted':   we cancelled it (barge-in) — do nothing, barge-in restarts
+    recognition = null;
+    if (e.error === 'aborted') return;
+    setState('idle');
+    if (e.error === 'no-speech' && vadRunning) {
+      setTimeout(() => { if (state === 'idle') startListening(); }, 300);
+    }
+  };
 
-  // onend fires after result OR on abort — go idle if we didn't get a result
-  recognition.onend = () => { if (state === 'listening') setState('idle'); };
+  rec.onend = () => {
+    // Fires after onresult OR after onerror. If we're still in 'listening'
+    // state here it means no result and no handled error — restart.
+    recognition = null;
+    if (state === 'listening' && vadRunning) {
+      setState('idle');
+      setTimeout(() => { if (state === 'idle') startListening(); }, 300);
+    }
+  };
 
-  recognition.start();
+  recognition = rec;
+  rec.start();
 }
 
 function stopListening() {
-  // VAD silence timeout calls this; abort the current recognition session
-  if (recognition) {
-    try { recognition.stop(); } catch (_) {}  // stop() → fires onresult if speech heard
-  }
+  // Only used externally (e.g. end-of-call). Does NOT stop mid-sentence.
+  if (recognition) { try { recognition.abort(); } catch (_) {} recognition = null; }
+  setState('idle');
 }
 
 // ── Pipeline: transcript → Groq LLM → Cartesia TTS ───────────────────────────
@@ -598,11 +606,13 @@ async function processTurn(transcript) {
     }
 
     setState('idle');
+    startListening(); // immediately ready for the next user turn
 
   } catch (err) {
     console.error('Pipeline error:', err);
     setState('idle');
     showToast('error', 'Something went wrong — please speak again');
+    startListening(); // restart so user can try again
   }
 }
 
