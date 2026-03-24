@@ -635,25 +635,32 @@ function _pickVoice() {
 function speak(text) {
   return new Promise(resolve => {
     setState('speaking');
-
-    // Cancel any ongoing utterance (barge-in path)
     speechSynthesis.cancel();
 
     const utt  = new SpeechSynthesisUtterance(text);
     utt.lang   = 'en-IN';
-    utt.rate   = 1.05;   // slightly faster — natural for a receptionist
-    utt.pitch  = 1.1;    // slightly higher — friendly female tone
+    utt.rate   = 1.0;
+    utt.pitch  = 1.1;
 
-    // Assign voice after voices are loaded (may be async on first call)
     const assignVoice = () => { const v = _pickVoice(); if (v) utt.voice = v; };
     if (speechSynthesis.getVoices().length) assignVoice();
     else speechSynthesis.onvoiceschanged = assignVoice;
 
-    // Store utterance reference so stopCurrentAudio() can cancel it
     currentSource = utt;
 
-    utt.onend   = () => { currentSource = null; resolve(); };
-    utt.onerror = () => { currentSource = null; resolve(); };
+    // Chrome bug: speechSynthesis silently pauses after ~15 s on long texts.
+    // Fix: kick a resume() heartbeat every 10 s while the utterance is active.
+    const heartbeat = setInterval(() => {
+      if (speechSynthesis.speaking) speechSynthesis.resume();
+    }, 10000);
+
+    const done = () => {
+      clearInterval(heartbeat);
+      currentSource = null;
+      resolve();
+    };
+    utt.onend   = done;
+    utt.onerror = done;
 
     speechSynthesis.speak(utt);
   });

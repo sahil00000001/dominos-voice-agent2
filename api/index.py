@@ -173,7 +173,7 @@ TOOLS = [
                     "customer_name":    {"type": "string", "description": "Customer's first name."},
                     "order_items":      {"type": "array",  "items": {"type": "string"}, "description": "e.g. ['1x Farmhouse Pizza (Medium)']"},
                     "delivery_address": {"type": "string", "description": "Full delivery address as spoken."},
-                    "order_total_inr":  {"type": "number", "description": "Order total in Indian Rupees."},
+                    "order_total_inr":  {"anyOf": [{"type": "number"}, {"type": "string"}], "description": "Order total in Indian Rupees (numeric)."},
                 },
                 "required": ["customer_name", "order_items", "delivery_address", "order_total_inr"],
             },
@@ -188,7 +188,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "item_name":      {"type": "string", "description": "e.g. 'Choco Lava Cake'"},
-                    "item_price_inr": {"type": "number", "description": "Price in Indian Rupees."},
+                    "item_price_inr": {"anyOf": [{"type": "number"}, {"type": "string"}], "description": "Price in Indian Rupees (numeric)."},
                 },
                 "required": ["item_name", "item_price_inr"],
             },
