@@ -414,17 +414,16 @@ const GREETING      = "Hi, thank you for calling Domino's! I'm Priya. May I know
 const VAD_THRESHOLD = 0.018;   // RMS amplitude to detect speech
 const VAD_SILENCE   = 700;     // ms of silence before sending to STT
 
-let state            = 'init';
-let messages         = [];     // conversation history sent to /api/chat
-let audioCtx         = null;
-let analyser         = null;
-let micStream        = null;
-let mediaRecorder    = null;
-let audioChunks      = [];
-let currentSource    = null;   // AudioBufferSourceNode for barge-in
-let vadTimer         = null;
-let speechActive     = false;
-let vadRunning       = false;
+let state         = 'init';
+let messages      = [];      // conversation history sent to /api/chat
+let audioCtx      = null;
+let analyser      = null;
+let micStream     = null;
+let recognition   = null;    // Web Speech API SpeechRecognition instance
+let currentSource = null;    // AudioBufferSourceNode for barge-in stop
+let vadTimer      = null;
+let speechActive  = false;
+let vadRunning    = false;
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 const stats = { calls: 0, orders: 0, revenue: 0, upsells: 0 };
@@ -522,55 +521,66 @@ function startVAD() {
   tick();
 }
 
-// ── Recording ─────────────────────────────────────────────────────────────────
+// ── Speech Recognition (Web Speech API) ──────────────────────────────────────
+// Replaces MediaRecorder + Deepgram. The browser handles audio capture and
+// transcription locally — no encoding issues, no API round-trip for STT.
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
 function startListening() {
-  if (state === 'listening') return;
+  if (state === 'listening' || !SpeechRec) return;
   setState('listening');
   speechActive = true;
-  audioChunks  = [];
 
-  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus'
-    : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+  // Abort any previous recognition session cleanly
+  if (recognition) { try { recognition.abort(); } catch (_) {} }
 
-  mediaRecorder = new MediaRecorder(micStream, { mimeType });
-  mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
-  mediaRecorder.onstop = onRecordStop;
-  mediaRecorder.start(100);
+  recognition = new SpeechRec();
+  recognition.lang            = 'en-IN'; // Indian English accent
+  recognition.continuous      = false;   // one utterance at a time
+  recognition.interimResults  = false;   // final results only
+
+  recognition.onresult = async (e) => {
+    const transcript = e.results[0][0].transcript.trim();
+    recognition = null;
+    if (transcript) await processTurn(transcript);
+    else setState('idle');
+  };
+
+  // onerror: 'no-speech' is normal (silence), anything else → idle
+  recognition.onerror = () => { recognition = null; setState('idle'); };
+
+  // onend fires after result OR on abort — go idle if we didn't get a result
+  recognition.onend = () => { if (state === 'listening') setState('idle'); };
+
+  recognition.start();
 }
 
 function stopListening() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.stop();
+  // VAD silence timeout calls this; abort the current recognition session
+  if (recognition) {
+    try { recognition.stop(); } catch (_) {}  // stop() → fires onresult if speech heard
   }
 }
 
-async function onRecordStop() {
-  if (!audioChunks.length || state === 'ended') { setState('idle'); return; }
+// ── Pipeline: transcript → Groq LLM → Cartesia TTS ───────────────────────────
+async function processTurn(transcript) {
+  if (!transcript || state === 'ended') { setState('idle'); return; }
 
   setState('thinking');
-
-  const mimeType = mediaRecorder.mimeType || 'audio/webm';
-  const blob = new Blob(audioChunks, { type: mimeType });
+  addUserMessage(transcript);
+  messages.push({ role: 'user', content: transcript });
 
   try {
-    // 1. STT
-    const transcript = await transcribe(blob, mimeType);
-    if (!transcript.trim()) { setState('idle'); return; }
-
-    addUserMessage(transcript);
-    messages.push({ role: 'user', content: transcript });
-
-    // 2. LLM
+    // 1. LLM
     const result = await chatAPI(messages);
     messages = result.messages || messages;
 
-    // 3. Handle tool events
-    for (const ev of (result.tool_events || [])) {
-      handleToolEvent(ev);
-    }
+    // 2. Handle tool events (order confirmed / upsell / finalised)
+    for (const ev of (result.tool_events || [])) handleToolEvent(ev);
 
-    // 4. TTS
+    // 3. TTS — speak the reply; barge-in will call stopCurrentAudio() if user
+    //    starts talking while this is playing (detected by the VAD loop below)
     const reply = (result.text || '').trim();
     if (reply) {
       showStreamingText(reply);
@@ -579,7 +589,7 @@ async function onRecordStop() {
       addBotMessage(reply);
     }
 
-    // 5. Call ended?
+    // 4. End of call?
     if (result.call_ended) {
       setState('ended');
       vadRunning = false;
@@ -597,16 +607,6 @@ async function onRecordStop() {
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
-async function transcribe(blob, mimeType) {
-  const resp = await fetch('/api/transcribe', {
-    method: 'POST',
-    headers: { 'Content-Type': mimeType },
-    body: blob,
-  });
-  if (!resp.ok) throw new Error(`STT error ${resp.status}`);
-  const data = await resp.json();
-  return data.transcript || '';
-}
 
 async function chatAPI(msgs) {
   const resp = await fetch('/api/chat', {
