@@ -296,7 +296,9 @@ async def transcribe(request: Request):
     the transcript as JSON: { "transcript": "..." }
     """
     audio_data   = await request.body()
-    content_type = request.headers.get("content-type", "audio/webm")
+    # Browser sends "audio/webm;codecs=opus" but Deepgram only accepts the base
+    # mime type without codec parameters — strip everything after the semicolon.
+    content_type = request.headers.get("content-type", "audio/webm").split(";")[0].strip()
     deepgram_key = os.environ.get("DEEPGRAM_API_KEY", "")
 
     params = urllib.parse.urlencode({
